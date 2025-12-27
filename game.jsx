@@ -112,6 +112,4 @@ function MiniGame({ onBoost, isActive }) {
     this
   );
 }
-export {
-  MiniGame as default
-};
+window.MiniGame = MiniGame;
