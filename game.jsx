@@ -44,7 +44,8 @@ function MiniGame({ onBoost, isActive }) {
         gameState.current.lastSpawn = time;
         gameState.current.spawnRate = Math.max(300, 1e3 - score * 10);
       }
-      gameState.current.packets.forEach((p, index) => {
+      for (let i = gameState.current.packets.length - 1; i >= 0; i--) {
+        const p = gameState.current.packets[i];
         p.y += p.speed;
         const img = p.type === "virus" ? virusImg.current : packetImg.current;
         ctx.save();
@@ -59,9 +60,9 @@ function MiniGame({ onBoost, isActive }) {
         }
         ctx.restore();
         if (p.y > canvas.height + 50) {
-          gameState.current.packets.splice(index, 1);
+          gameState.current.packets.splice(i, 1);
         }
-      });
+      }
       requestRef.current = requestAnimationFrame(update);
     };
     requestRef.current = requestAnimationFrame(update);
@@ -78,12 +79,13 @@ function MiniGame({ onBoost, isActive }) {
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    gameState.current.packets.forEach((p, index) => {
+    for (let i = gameState.current.packets.length - 1; i >= 0; i--) {
+      const p = gameState.current.packets[i];
       const dx = x - p.x;
       const dy = y - p.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < p.size) {
-        gameState.current.packets.splice(index, 1);
+        gameState.current.packets.splice(i, 1);
         if (p.type === "virus") {
           onBoost(-15);
         } else {
@@ -92,7 +94,7 @@ function MiniGame({ onBoost, isActive }) {
           onBoost(5);
         }
       }
-    });
+    }
   }, [isActive, onBoost]);
   return /* @__PURE__ */ jsxDEV(
     "canvas",
@@ -106,7 +108,7 @@ function MiniGame({ onBoost, isActive }) {
     false,
     {
       fileName: "<stdin>",
-      lineNumber: 135,
+      lineNumber: 136,
       columnNumber: 9
     },
     this
