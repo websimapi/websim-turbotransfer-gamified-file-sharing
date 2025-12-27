@@ -50,3 +50,7 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #22d3ee; 
 }
+
+.touch-none {
+    touch-action: none;
+}

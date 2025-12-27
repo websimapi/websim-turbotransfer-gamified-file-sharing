@@ -34,8 +34,12 @@ const loadSound = async (url) => {
 // Preload buffers
 let buffers = {};
 
+export const resumeAudio = () => {
+    if (audioContext.state === 'suspended') audioContext.resume();
+};
+
 export const initAudio = async () => {
-    if(audioContext.state === 'suspended') audioContext.resume();
+    resumeAudio();
     try {
         buffers['boost'] = await loadSound('sfx_boost.mp3');
         buffers['complete'] = await loadSound('sfx_complete.mp3');

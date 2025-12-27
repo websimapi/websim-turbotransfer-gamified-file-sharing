@@ -2,13 +2,15 @@ import { jsxDEV } from "react/jsx-dev-runtime";
 import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { Upload, Download, File, Play, Zap, ShieldAlert, Wifi } from "lucide-react";
-import { room, initStore, formatBytes, initAudio, playSound, filesStore } from "./store.js";
+import { room, initStore, formatBytes, initAudio, playSound, filesStore, resumeAudio } from "./store.js";
 function MiniGame({ onBoost, isActive }) {
   const canvasRef = useRef(null);
   const [score, setScore] = useState(0);
   const requestRef = useRef();
   const gameState = useRef({
     packets: [],
+    ripples: [],
+    // Visual feedback for taps
     lastSpawn: 0,
     spawnRate: 1e3,
     width: 0,
@@ -16,12 +18,39 @@ function MiniGame({ onBoost, isActive }) {
   });
   const packetImg = useRef(new Image());
   const virusImg = useRef(new Image());
+  const handleInput = useCallback((clientX, clientY) => {
+    if (!isActive || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    gameState.current.ripples.push({ x, y, age: 0 });
+    const hitRadius = 70;
+    for (let i = gameState.current.packets.length - 1; i >= 0; i--) {
+      const p = gameState.current.packets[i];
+      const dx = x - p.x;
+      const dy = y - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < hitRadius) {
+        gameState.current.packets.splice(i, 1);
+        if (p.type === "virus") {
+          onBoost(-15);
+        } else {
+          playSound("boost");
+          setScore((s) => s + 1);
+          onBoost(5);
+        }
+        break;
+      }
+    }
+  }, [isActive, onBoost]);
   useEffect(() => {
     packetImg.current.src = "packet.png";
     virusImg.current.src = "virus.png";
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
     const resize = () => {
+      if (!canvas) return;
       canvas.width = canvas.clientWidth;
       canvas.height = canvas.clientHeight;
       gameState.current.width = canvas.width;
@@ -31,37 +60,53 @@ function MiniGame({ onBoost, isActive }) {
     resize();
     const update = (time) => {
       if (!isActive) return;
+      if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (time - gameState.current.lastSpawn > gameState.current.spawnRate) {
-        const isVirus = Math.random() < 0.2;
+        const isVirus = Math.random() < 0.25;
         gameState.current.packets.push({
           id: Math.random(),
-          x: Math.random() * (canvas.width - 60) + 30,
-          y: -50,
-          speed: (Math.random() * 2 + 2) * (canvas.height / 500),
-          // Scale speed by height
+          x: Math.random() * (canvas.width - 80) + 40,
+          y: -60,
+          speed: (Math.random() * 3 + 2) * (canvas.height / 600),
           type: isVirus ? "virus" : "packet",
-          size: 50
+          size: 60
+          // Larger sprites for mobile
         });
         gameState.current.lastSpawn = time;
-        gameState.current.spawnRate = Math.max(300, 1e3 - score * 10);
+        gameState.current.spawnRate = Math.max(250, 900 - score * 15);
+      }
+      for (let i = gameState.current.ripples.length - 1; i >= 0; i--) {
+        const r = gameState.current.ripples[i];
+        r.age += 1;
+        if (r.age > 20) {
+          gameState.current.ripples.splice(i, 1);
+          continue;
+        }
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.age * 2, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(6, 182, 212, ${1 - r.age / 20})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
       }
       for (let i = gameState.current.packets.length - 1; i >= 0; i--) {
         const p = gameState.current.packets[i];
         p.y += p.speed;
         const img = p.type === "virus" ? virusImg.current : packetImg.current;
         ctx.save();
-        const pulse = 1 + Math.sin(time / 200) * 0.1;
+        const pulse = 1 + Math.sin(time / 150) * 0.1;
         ctx.translate(p.x, p.y);
         ctx.scale(pulse, pulse);
-        if (img.complete) {
+        if (img.complete && img.naturalWidth > 0) {
           ctx.drawImage(img, -p.size / 2, -p.size / 2, p.size, p.size);
         } else {
           ctx.fillStyle = p.type === "virus" ? "red" : "cyan";
-          ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+          ctx.beginPath();
+          ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+          ctx.fill();
         }
         ctx.restore();
-        if (p.y > canvas.height + 50) {
+        if (p.y > canvas.height + 80) {
           gameState.current.packets.splice(i, 1);
         }
       }
@@ -73,44 +118,29 @@ function MiniGame({ onBoost, isActive }) {
       cancelAnimationFrame(requestRef.current);
     };
   }, [isActive, score]);
-  const handleTouch = useCallback((e) => {
-    if (!isActive) return;
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    for (let i = gameState.current.packets.length - 1; i >= 0; i--) {
-      const p = gameState.current.packets[i];
-      const dx = x - p.x;
-      const dy = y - p.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < p.size) {
-        gameState.current.packets.splice(i, 1);
-        if (p.type === "virus") {
-          onBoost(-15);
-        } else {
-          playSound("boost");
-          setScore((s) => s + 1);
-          onBoost(5);
-        }
-      }
+  const handleTouchStart = (e) => {
+    if (e.cancelable) e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      handleInput(t.clientX, t.clientY);
     }
-  }, [isActive, onBoost]);
+  };
+  const handleMouseDown = (e) => {
+    handleInput(e.clientX, e.clientY);
+  };
   return /* @__PURE__ */ jsxDEV(
     "canvas",
     {
       ref: canvasRef,
-      className: "w-full h-full cursor-crosshair touch-none",
-      onMouseDown: handleTouch,
-      onTouchStart: handleTouch
+      className: "w-full h-full cursor-crosshair touch-none select-none active:cursor-grabbing",
+      onMouseDown: handleMouseDown,
+      onTouchStart: handleTouchStart
     },
     void 0,
     false,
     {
       fileName: "<stdin>",
-      lineNumber: 138,
+      lineNumber: 169,
       columnNumber: 9
     },
     this
@@ -119,10 +149,20 @@ function MiniGame({ onBoost, isActive }) {
 function App() {
   const [view, setView] = useState("list");
   const [isUploading, setIsUploading] = useState(false);
-  const files = useSyncExternalStore(
+  const dbFiles = useSyncExternalStore(
     filesStore.subscribe,
     filesStore.getSnapshot
   );
+  const tutorialFile = {
+    id: "tutorial-sys-opt",
+    name: "TRAINING_MODULE_V1.dat",
+    size: 1024 * 1024 * 5,
+    // 5 MB
+    created_at: (/* @__PURE__ */ new Date()).toISOString(),
+    url: "#",
+    isTutorial: true
+  };
+  const files = dbFiles.length > 0 ? dbFiles : [tutorialFile];
   const [activeFile, setActiveFile] = useState(null);
   const [progress, setProgress] = useState(0);
   const [downloadSpeed, setDownloadSpeed] = useState(0);
@@ -131,6 +171,7 @@ function App() {
     initAudio();
   }, []);
   const handleFileUpload = async (e) => {
+    resumeAudio();
     const file = e.target.files[0];
     if (!file) return;
     setIsUploading(true);
@@ -163,12 +204,14 @@ function App() {
       }, 100);
     } else {
       playSound("complete");
-      const link = document.createElement("a");
-      link.href = activeFile.url;
-      link.download = activeFile.name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      if (activeFile.url && activeFile.url !== "#") {
+        const link = document.createElement("a");
+        link.href = activeFile.url;
+        link.download = activeFile.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
       setTimeout(() => {
         setView("list");
         setProgress(0);
@@ -188,6 +231,7 @@ function App() {
     setTimeout(() => setDownloadSpeed((Math.random() * 2 + 1).toFixed(1)), 500);
   };
   const startDownload = (file) => {
+    resumeAudio();
     setActiveFile(file);
     setProgress(0);
     setView("download");
@@ -197,34 +241,34 @@ function App() {
       /* @__PURE__ */ jsxDEV("div", { className: "flex items-center gap-2", children: [
         /* @__PURE__ */ jsxDEV(Wifi, { className: `w-5 h-5 ${isUploading ? "animate-pulse text-yellow-400" : "text-cyan-400"}` }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 259,
+          lineNumber: 307,
           columnNumber: 21
         }, this),
         /* @__PURE__ */ jsxDEV("h1", { className: "text-xl font-bold tracking-widest text-cyan-100", children: [
           "TURBO",
           /* @__PURE__ */ jsxDEV("span", { className: "text-cyan-500", children: "TRANSFER" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 260,
+            lineNumber: 308,
             columnNumber: 90
           }, this)
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 260,
+          lineNumber: 308,
           columnNumber: 21
         }, this)
       ] }, void 0, true, {
         fileName: "<stdin>",
-        lineNumber: 258,
+        lineNumber: 306,
         columnNumber: 17
       }, this),
       view === "download" && /* @__PURE__ */ jsxDEV("button", { onClick: () => setView("list"), className: "text-xs border border-cyan-700 px-2 py-1 hover:bg-cyan-900/50", children: "ABORT" }, void 0, false, {
         fileName: "<stdin>",
-        lineNumber: 263,
+        lineNumber: 311,
         columnNumber: 22
       }, this)
     ] }, void 0, true, {
       fileName: "<stdin>",
-      lineNumber: 257,
+      lineNumber: 305,
       columnNumber: 13
     }, this),
     /* @__PURE__ */ jsxDEV("main", { className: "flex-1 relative overflow-hidden", children: [
@@ -237,67 +281,78 @@ function App() {
           /* @__PURE__ */ jsxDEV("div", { className: "flex flex-col items-center justify-center pt-5 pb-6", children: [
             isUploading ? /* @__PURE__ */ jsxDEV("div", { className: "animate-spin mb-2", children: /* @__PURE__ */ jsxDEV(Upload, { className: "w-8 h-8 text-yellow-500" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 286,
+              lineNumber: 334,
               columnNumber: 45
             }, this) }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 285,
+              lineNumber: 333,
               columnNumber: 41
             }, this) : /* @__PURE__ */ jsxDEV(Upload, { className: "w-8 h-8 mb-2 text-cyan-500 group-hover:scale-110 transition-transform" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 289,
+              lineNumber: 337,
               columnNumber: 41
             }, this),
             /* @__PURE__ */ jsxDEV("p", { className: "mb-2 text-sm text-cyan-300", children: isUploading ? "ENCRYPTING & UPLOADING..." : "Click to Upload File" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 291,
+              lineNumber: 339,
               columnNumber: 37
             }, this),
             /* @__PURE__ */ jsxDEV("p", { className: "text-xs text-cyan-600", children: "Secure Protocol v1.0" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 294,
+              lineNumber: 342,
               columnNumber: 37
             }, this)
           ] }, void 0, true, {
             fileName: "<stdin>",
-            lineNumber: 283,
+            lineNumber: 331,
             columnNumber: 33
           }, this),
           /* @__PURE__ */ jsxDEV("input", { type: "file", className: "hidden", onChange: handleFileUpload, disabled: isUploading }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 296,
+            lineNumber: 344,
             columnNumber: 33
           }, this)
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 278,
+          lineNumber: 326,
           columnNumber: 29
         }, this) }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 277,
+          lineNumber: 325,
           columnNumber: 25
         }, this),
         /* @__PURE__ */ jsxDEV("div", { className: "flex-1 overflow-y-auto pr-2 space-y-3", children: [
-          /* @__PURE__ */ jsxDEV("h2", { className: "text-cyan-500 text-sm border-b border-cyan-900 pb-1 mb-2 sticky top-0 bg-slate-900", children: "AVAILABLE DATA STREAMS" }, void 0, false, {
+          /* @__PURE__ */ jsxDEV("h2", { className: "text-cyan-500 text-sm border-b border-cyan-900 pb-1 mb-2 sticky top-0 bg-slate-900 flex justify-between", children: [
+            /* @__PURE__ */ jsxDEV("span", { children: "AVAILABLE DATA STREAMS" }, void 0, false, {
+              fileName: "<stdin>",
+              lineNumber: 351,
+              columnNumber: 33
+            }, this),
+            /* @__PURE__ */ jsxDEV("span", { className: "text-xs text-cyan-700 animate-pulse", children: "TAP 'PULL' TO PLAY" }, void 0, false, {
+              fileName: "<stdin>",
+              lineNumber: 352,
+              columnNumber: 33
+            }, this)
+          ] }, void 0, true, {
             fileName: "<stdin>",
-            lineNumber: 302,
+            lineNumber: 350,
             columnNumber: 29
           }, this),
           files.length === 0 ? /* @__PURE__ */ jsxDEV("div", { className: "text-center text-slate-600 py-10 italic", children: "No signals detected..." }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 304,
+            lineNumber: 355,
             columnNumber: 33
           }, this) : [...files].reverse().map((file) => /* @__PURE__ */ jsxDEV("div", { className: "group bg-slate-800/50 border border-slate-700 hover:border-cyan-500 p-3 rounded flex justify-between items-center transition-all hover:shadow-[0_0_10px_rgba(6,182,212,0.2)]", children: [
             /* @__PURE__ */ jsxDEV("div", { className: "flex items-center gap-3 overflow-hidden", children: [
               /* @__PURE__ */ jsxDEV(File, { className: "w-5 h-5 text-cyan-600 flex-shrink-0" }, void 0, false, {
                 fileName: "<stdin>",
-                lineNumber: 309,
+                lineNumber: 360,
                 columnNumber: 45
               }, this),
               /* @__PURE__ */ jsxDEV("div", { className: "min-w-0", children: [
                 /* @__PURE__ */ jsxDEV("p", { className: "text-cyan-100 font-medium truncate text-sm", children: file.name }, void 0, false, {
                   fileName: "<stdin>",
-                  lineNumber: 311,
+                  lineNumber: 362,
                   columnNumber: 49
                 }, this),
                 /* @__PURE__ */ jsxDEV("p", { className: "text-xs text-slate-400", children: [
@@ -306,28 +361,28 @@ function App() {
                   new Date(file.created_at).toLocaleDateString()
                 ] }, void 0, true, {
                   fileName: "<stdin>",
-                  lineNumber: 312,
+                  lineNumber: 363,
                   columnNumber: 49
                 }, this)
               ] }, void 0, true, {
                 fileName: "<stdin>",
-                lineNumber: 310,
+                lineNumber: 361,
                 columnNumber: 45
               }, this)
             ] }, void 0, true, {
               fileName: "<stdin>",
-              lineNumber: 308,
+              lineNumber: 359,
               columnNumber: 41
             }, this),
             /* @__PURE__ */ jsxDEV(
               "button",
               {
                 onClick: () => startDownload(file),
-                className: "ml-3 px-3 py-1.5 bg-cyan-900/30 hover:bg-cyan-500 hover:text-white border border-cyan-700 rounded text-xs font-bold transition-colors flex items-center gap-2",
+                className: "ml-3 px-4 py-3 bg-cyan-900/40 hover:bg-cyan-500 hover:text-white border border-cyan-500 rounded text-sm font-bold transition-all flex items-center gap-2 active:scale-95 shadow-[0_0_10px_rgba(6,182,212,0.1)]",
                 children: [
-                  /* @__PURE__ */ jsxDEV(Download, { className: "w-3 h-3" }, void 0, false, {
+                  /* @__PURE__ */ jsxDEV(Download, { className: "w-4 h-4" }, void 0, false, {
                     fileName: "<stdin>",
-                    lineNumber: 319,
+                    lineNumber: 370,
                     columnNumber: 45
                   }, this),
                   "PULL"
@@ -337,91 +392,91 @@ function App() {
               true,
               {
                 fileName: "<stdin>",
-                lineNumber: 315,
+                lineNumber: 366,
                 columnNumber: 41
               },
               this
             )
           ] }, file.id, true, {
             fileName: "<stdin>",
-            lineNumber: 307,
+            lineNumber: 358,
             columnNumber: 37
           }, this))
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 301,
+          lineNumber: 349,
           columnNumber: 25
         }, this)
       ] }, void 0, true, {
         fileName: "<stdin>",
-        lineNumber: 274,
+        lineNumber: 322,
         columnNumber: 21
       }, this),
       view === "download" && activeFile && /* @__PURE__ */ jsxDEV("div", { className: "h-full flex flex-col relative", children: [
         /* @__PURE__ */ jsxDEV("div", { className: "absolute inset-0 z-0", children: /* @__PURE__ */ jsxDEV(MiniGame, { onBoost: handleBoost, isActive: progress < 100 }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 334,
+          lineNumber: 385,
           columnNumber: 29
         }, this) }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 333,
+          lineNumber: 384,
           columnNumber: 25
         }, this),
         /* @__PURE__ */ jsxDEV("div", { className: "absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 bg-slate-900/20", children: [
           /* @__PURE__ */ jsxDEV("div", { className: "text-center space-y-1", children: [
             /* @__PURE__ */ jsxDEV("h2", { className: "text-lg font-bold text-white drop-shadow-[0_0_5px_rgba(0,0,0,1)]", children: activeFile.name }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 342,
+              lineNumber: 393,
               columnNumber: 33
             }, this),
             /* @__PURE__ */ jsxDEV("div", { className: "inline-flex items-center gap-4 bg-black/60 px-4 py-1 rounded-full border border-cyan-500/30 backdrop-blur-md", children: /* @__PURE__ */ jsxDEV("div", { className: "text-xs text-cyan-300", children: [
               "SPEED: ",
               /* @__PURE__ */ jsxDEV("span", { className: "text-white font-mono text-lg", children: downloadSpeed }, void 0, false, {
                 fileName: "<stdin>",
-                lineNumber: 345,
+                lineNumber: 396,
                 columnNumber: 48
               }, this),
               " MB/s"
             ] }, void 0, true, {
               fileName: "<stdin>",
-              lineNumber: 344,
+              lineNumber: 395,
               columnNumber: 37
             }, this) }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 343,
+              lineNumber: 394,
               columnNumber: 33
             }, this)
           ] }, void 0, true, {
             fileName: "<stdin>",
-            lineNumber: 341,
+            lineNumber: 392,
             columnNumber: 29
           }, this),
           progress < 5 && /* @__PURE__ */ jsxDEV("div", { className: "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center animate-pulse", children: [
             /* @__PURE__ */ jsxDEV(Zap, { className: "w-12 h-12 text-yellow-400 mx-auto mb-2" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 353,
+              lineNumber: 404,
               columnNumber: 37
             }, this),
             /* @__PURE__ */ jsxDEV("p", { className: "text-xl font-bold text-white bg-black/50 px-3 py-1", children: "TAP BLUE DATA PACKETS!" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 354,
+              lineNumber: 405,
               columnNumber: 37
             }, this),
             /* @__PURE__ */ jsxDEV("p", { className: "text-sm text-red-400 bg-black/50 px-3 py-1 mt-1", children: "AVOID RED VIRUSES!" }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 355,
+              lineNumber: 406,
               columnNumber: 37
             }, this)
           ] }, void 0, true, {
             fileName: "<stdin>",
-            lineNumber: 352,
+            lineNumber: 403,
             columnNumber: 33
           }, this),
           /* @__PURE__ */ jsxDEV("div", { className: "space-y-2 mb-4", children: [
             /* @__PURE__ */ jsxDEV("div", { className: "flex justify-between text-xs font-bold px-1 text-cyan-300 bg-black/40 rounded py-1 backdrop-blur", children: [
               /* @__PURE__ */ jsxDEV("span", { children: "TRANSFER PROGRESS" }, void 0, false, {
                 fileName: "<stdin>",
-                lineNumber: 362,
+                lineNumber: 413,
                 columnNumber: 37
               }, this),
               /* @__PURE__ */ jsxDEV("span", { children: [
@@ -429,12 +484,12 @@ function App() {
                 "%"
               ] }, void 0, true, {
                 fileName: "<stdin>",
-                lineNumber: 363,
+                lineNumber: 414,
                 columnNumber: 37
               }, this)
             ] }, void 0, true, {
               fileName: "<stdin>",
-              lineNumber: 361,
+              lineNumber: 412,
               columnNumber: 33
             }, this),
             /* @__PURE__ */ jsxDEV("div", { className: "h-6 bg-slate-800 border border-slate-600 rounded-sm overflow-hidden relative", children: /* @__PURE__ */ jsxDEV(
@@ -444,7 +499,7 @@ function App() {
                 style: { width: `${progress}%` },
                 children: /* @__PURE__ */ jsxDEV("div", { className: "absolute inset-0 bg-white/20 w-full h-full animate-[pulse_1s_infinite]" }, void 0, false, {
                   fileName: "<stdin>",
-                  lineNumber: 370,
+                  lineNumber: 421,
                   columnNumber: 41
                 }, this)
               },
@@ -452,70 +507,70 @@ function App() {
               false,
               {
                 fileName: "<stdin>",
-                lineNumber: 366,
+                lineNumber: 417,
                 columnNumber: 37
               },
               this
             ) }, void 0, false, {
               fileName: "<stdin>",
-              lineNumber: 365,
+              lineNumber: 416,
               columnNumber: 33
             }, this)
           ] }, void 0, true, {
             fileName: "<stdin>",
-            lineNumber: 360,
+            lineNumber: 411,
             columnNumber: 29
           }, this)
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 338,
+          lineNumber: 389,
           columnNumber: 25
         }, this),
         progress >= 100 && /* @__PURE__ */ jsxDEV("div", { className: "absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center animate-in fade-in duration-500", children: [
           /* @__PURE__ */ jsxDEV("div", { className: "rounded-full bg-cyan-500/20 p-6 mb-4 glow-effect", children: /* @__PURE__ */ jsxDEV(Download, { className: "w-12 h-12 text-cyan-400" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 380,
+            lineNumber: 431,
             columnNumber: 37
           }, this) }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 379,
+            lineNumber: 430,
             columnNumber: 33
           }, this),
           /* @__PURE__ */ jsxDEV("h2", { className: "text-2xl font-bold text-white mb-2", children: "TRANSFER COMPLETE" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 382,
+            lineNumber: 433,
             columnNumber: 33
           }, this),
           /* @__PURE__ */ jsxDEV("p", { className: "text-cyan-500 animate-bounce", children: "File saved to device" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 383,
+            lineNumber: 434,
             columnNumber: 33
           }, this)
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 378,
+          lineNumber: 429,
           columnNumber: 29
         }, this)
       ] }, void 0, true, {
         fileName: "<stdin>",
-        lineNumber: 331,
+        lineNumber: 382,
         columnNumber: 21
       }, this)
     ] }, void 0, true, {
       fileName: "<stdin>",
-      lineNumber: 270,
+      lineNumber: 318,
       columnNumber: 13
     }, this)
   ] }, void 0, true, {
     fileName: "<stdin>",
-    lineNumber: 255,
+    lineNumber: 303,
     columnNumber: 9
   }, this);
 }
 const root = createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ jsxDEV(App, {}, void 0, false, {
   fileName: "<stdin>",
-  lineNumber: 394,
+  lineNumber: 445,
   columnNumber: 13
 }));
 export {
