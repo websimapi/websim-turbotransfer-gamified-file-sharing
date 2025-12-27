@@ -5,12 +5,12 @@ export const room = new WebsimSocket();
 export const initStore = async () => {
     await room.initialize();
     
-    // Ensure we are subscribed to the files collection
-    // This allows realtime updates when new files are added
-    room.collection('files').subscribe((files) => {
-        // We can use this hook for debugging or side effects
-        // but React's useSyncExternalStore is better for UI
-    });
+};
+
+const filesCollection = room.collection('files');
+export const filesStore = {
+    subscribe: (cb) => filesCollection.subscribe(cb),
+    getSnapshot: () => filesCollection.getList()
 };
 
 export const formatBytes = (bytes, decimals = 2) => {

@@ -2,7 +2,7 @@ import { jsxDEV } from "react/jsx-dev-runtime";
 import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { Upload, Download, File, Play, Zap, ShieldAlert, Wifi } from "lucide-react";
-import { room, initStore, formatBytes, initAudio, playSound } from "./store.js";
+import { room, initStore, formatBytes, initAudio, playSound, filesStore } from "./store.js";
 function MiniGame({ onBoost, isActive }) {
   const canvasRef = useRef(null);
   const [score, setScore] = useState(0);
@@ -120,8 +120,8 @@ function App() {
   const [view, setView] = useState("list");
   const [isUploading, setIsUploading] = useState(false);
   const files = useSyncExternalStore(
-    room.collection("files").subscribe,
-    room.collection("files").getList
+    filesStore.subscribe,
+    filesStore.getSnapshot
   );
   const [activeFile, setActiveFile] = useState(null);
   const [progress, setProgress] = useState(0);
